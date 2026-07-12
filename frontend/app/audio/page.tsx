@@ -177,7 +177,7 @@ export default function SampleAudioPage () {
 
         const data = new Uint8Array(2048)
         analyserRef.current?.getByteTimeDomainData(data)
-        console.log(`Fiirst few values: ${data[0]}, ${data[1]}, ${data[2]}, ${data[3]}`)
+        console.log(`First few values: ${data[0]}, ${data[1]}, ${data[2]}, ${data[3]}`)
 
         const npoints = data.length
 

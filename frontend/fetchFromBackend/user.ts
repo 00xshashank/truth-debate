@@ -1,4 +1,4 @@
-import z, { success } from "zod"
+import z from "zod"
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL
 if (!BACKEND_URL) {

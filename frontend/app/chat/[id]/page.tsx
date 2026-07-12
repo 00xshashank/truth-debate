@@ -10,7 +10,9 @@ import { fetchChatHistory, type MessageList } from "./utils"
 import { Mic, SendHorizonal, MicOff } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { toast } from "sonner"
-import z from "zod"
+import z, { number } from "zod"
+
+import { transcribe } from "@/fetchFromBackend/audio"
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL
 if (!BACKEND_URL) {
@@ -45,31 +47,6 @@ const chunkSchema = z.object({
     message: z.string()
 })
 
-async function transcribe(audioBlob: Blob) {
-    const formData = new FormData()
-    formData.append("file", audioBlob)
-
-    const response = await fetch(`${BACKEND_URL}/audio/transcribe`, {
-        method: "POST",
-        body: formData
-    })
-    const jresponse = await response.json()
-    console.log(`jresponse: ${jresponse}`)
-
-    const transcriptSchema = z.object({
-        transcription: z.string()
-    })
-    const parsedData = transcriptSchema.safeParse(jresponse)
-    if (parsedData.error) {
-        console.log(`Error while parsing data: ${parsedData.error}`)
-        throw new Error("Error while parsing data: ${parsedData.error}")
-    }
-
-    console.log(`Received transcription: ${parsedData.data.transcription}`)
-
-    return parsedData.data.transcription
-}
-
 export default function ChatMessagePage() {
     const { id } = useParams<{id: string}>()
     console.log(`Chat id: ${id}`)
@@ -77,12 +54,16 @@ export default function ChatMessagePage() {
     const [ userInput, setUserInput ] = useState<string>("")
     const [ messageList, setMessageList ] = useState<MessageList>([])
     const [ isRecording, setIsRecording ] = useState<boolean>(false)
-    // const [ showTranscribeButton, setShowTranscribeButton ] = useState<boolean>(false)
 
     const [ audioUrl, setAudioUrl ] = useState<string>("")
 
     const mediaRecorderRef = useRef<MediaRecorder>(null)
     const audioChunksRef = useRef<Blob[]>([])
+    const canvasRef = useRef<HTMLCanvasElement>(null)
+
+    const audioCtxRef = useRef<AudioContext>(null)
+    const analyserNodeRef = useRef<AnalyserNode>(null)
+    const canvasDrawIdRef = useRef<number>(0)
 
     async function sendMessage() {
         setUserInput("")
@@ -180,8 +161,20 @@ export default function ChatMessagePage() {
     }
 
     async function startAudioRecord() {
+        showUserAudio()
+
         const stream = await navigator.mediaDevices.getUserMedia({ "audio": true })
         const mediaRecorder = new MediaRecorder(stream)
+
+        if (!audioCtxRef.current) {
+            throw new Error("Audio context ref is not defined when startAudioRecord called")
+        }
+        if (!analyserNodeRef.current) {
+            throw new Error("Analyser node ref is not defined when startAudioRecord called")
+        }
+
+        const source = audioCtxRef.current.createMediaStreamSource(stream)
+        source.connect(analyserNodeRef.current)
 
         mediaRecorder.ondataavailable = (ev: BlobEvent) => {
             audioChunksRef.current.push(ev.data)
@@ -204,30 +197,82 @@ export default function ChatMessagePage() {
         setIsRecording(true)
     }
 
-    async function stopAudioRecord() {
+    function stopAudioRecord() {
         if (mediaRecorderRef.current) {
             mediaRecorderRef.current.stop()
         } else {
             throw new Error("stopAudioRecord called with null mediaRecorderRef")
         }
 
+        cancelShowUserAudio()
         setIsRecording(false)
     }
 
-    async function handleVoiceInput() {
+    function handleVoiceInput() {
         console.log("function handleVoiceInput called")
         if (!isRecording) {
-            await startAudioRecord()
+            startAudioRecord()
         } else {
-            await stopAudioRecord()
+            stopAudioRecord()
         }
     }
 
     async function getTranscription() {
         const transcription = await transcribe(new Blob(audioChunksRef.current, { "type": "audio/webm" }))
+        if (!transcription.success) {
+            toast.error("Failed to get transcription", {
+                description: transcription.message
+            })
+        }
+
         setUserInput((prev) => {
-            return prev + transcription
+            return prev + transcription.message
         })
+    }
+
+    function cancelShowUserAudio() {
+        cancelAnimationFrame(canvasDrawIdRef.current)
+    }
+
+    function showUserAudio() {
+        if (!analyserNodeRef.current) {
+            throw new Error("Analyser node ref is not defined when showUserAudio is called")
+        }
+
+        canvasDrawIdRef.current = requestAnimationFrame(showUserAudio)
+
+        const canvas = canvasRef.current
+        if (!canvas) {
+            throw new Error("function showUserAudio called before canvasRef.current exists")
+        }
+
+        const canvasCtx = canvas.getContext("2d")
+        if (!canvasCtx) {
+            throw new Error("Failed to get canvas context")
+        }
+
+        const dataArray = new Uint8Array(2048)
+        analyserNodeRef.current.getByteTimeDomainData(dataArray)
+
+        canvasCtx.fillStyle = "#ff0000"
+        canvasCtx.fillRect(0, 0, canvas.width, canvas.height)
+
+        canvasCtx.lineWidth = 2
+        canvasCtx.strokeStyle = "#000000"
+        canvasCtx.beginPath()
+
+        for (let i=0; i<2048; i++) {
+            const x = (canvas.width / 2048) * i
+            const y = dataArray[i]
+
+            if (i === 0) {
+                canvasCtx.moveTo(x, y)
+            } else {
+                canvasCtx.lineTo(x, y)
+            }
+        }
+
+        canvasCtx.stroke()
     }
 
     useEffect(() => {
@@ -237,6 +282,13 @@ export default function ChatMessagePage() {
         }
 
         fetchMessages()
+
+        audioCtxRef.current = new AudioContext()
+        analyserNodeRef.current = audioCtxRef.current.createAnalyser()
+
+        analyserNodeRef.current.fftSize = 2048
+        analyserNodeRef.current.minDecibels = -90
+        analyserNodeRef.current.maxDecibels = -10
     }, [])
     
     return (
@@ -266,31 +318,39 @@ export default function ChatMessagePage() {
                     )
                 })}
                 </div>
-                <div className="flex flex-row gap-1 shrink-0">
-                    <Input 
-                        value={userInput}
-                        onChange={(e) => { setUserInput(e.target.value) }}
-                        placeholder="Enter your query here" 
-                        className="w-full"
-                    />
-                    <Button onClick={handleVoiceInput} variant={isRecording ? "destructive" : "default"}>
-                        {isRecording ? <MicOff /> : <Mic />}
-                    </Button>
 
-                    {
-                        audioChunksRef.current.length !== 0 &&
-                        <Button onClick={getTranscription}>
-                            Transcribe
-                        </Button>
-                    }
-                    <Button onClick={sendMessage}>
-                        <SendHorizonal />
-                    </Button>
-
+                <div className="flex flex-col gap-3">
                     <div>
+                        <canvas className="w-full h-50" style={{ display: isRecording ? "block" : "none" }} ref={canvasRef}></canvas>
+                    </div> 
+                    {/* className={`${isRecording ? "visible" : "invisible"}`} */}
+
+                    <div className="flex flex-row gap-1 shrink-0">
+                        <Input 
+                            value={userInput}
+                            onChange={(e) => { setUserInput(e.target.value) }}
+                            placeholder="Enter your query here" 
+                            className="w-full"
+                        />
+                        <Button onClick={handleVoiceInput} variant={isRecording ? "destructive" : "default"}>
+                            {isRecording ? <MicOff /> : <Mic />}
+                        </Button>
+
                         {
-                            audioUrl && <audio src={audioUrl} controls></audio>
+                            audioChunksRef.current.length !== 0 &&
+                            <Button onClick={getTranscription}>
+                                Transcribe
+                            </Button>
                         }
+                        <Button onClick={sendMessage}>
+                            <SendHorizonal />
+                        </Button>
+
+                        <div>
+                            {
+                                audioUrl && <audio src={audioUrl} controls></audio>
+                            }
+                        </div>
                     </div>
                 </div>
             </div>
