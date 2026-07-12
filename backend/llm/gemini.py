@@ -16,6 +16,7 @@ GEMINI_API_KEY=os.getenv("GEMINI_API_KEY")
 class GeminiClient(LLMClient):
     def __init__(self, model_name: str, backup_model_name: str | None = None) -> None:
         super().__init__(model_name)
+        self.type = "gemini"
         self.backup_model_name = backup_model_name
         self.gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
@@ -26,7 +27,8 @@ class GeminiClient(LLMClient):
         # message_history: List[Message],
         user_query: str,
         gemini_model: str,
-        tools: List | None = None
+        functions_map,
+        tools: List
     ) -> Generator[str]:
         model_response = self.gemini_client.models.generate_content_stream(
             model=gemini_model,
@@ -50,7 +52,8 @@ class GeminiClient(LLMClient):
         system_prompt: str,
         # message_history: List[Message],
         user_query: str,
-        tools: List | None = None
+        functions_map,
+        tools: List
     ) -> Generator[str]:
         try:
             for chunk in self.stream_response_content(
@@ -58,6 +61,7 @@ class GeminiClient(LLMClient):
                 system_prompt=system_prompt,
                 user_query=user_query,
                 gemini_model=self.model_name,
+                functions_map=functions_map,
                 tools=tools
             ):
                 yield chunk
@@ -70,6 +74,7 @@ class GeminiClient(LLMClient):
                     system_prompt=system_prompt,
                     user_query=user_query,
                     gemini_model=self.backup_model_name,
+                    functions_map=functions_map,
                     tools=tools
                 ):
                     yield chunk

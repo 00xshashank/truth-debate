@@ -1,5 +1,4 @@
-import os
-from typing import List
+from typing import List, Callable
 import json
 from loguru import logger
 import time
@@ -7,10 +6,7 @@ from sqlmodel import Session
 
 
 from custom_types import Message
-from pubmed import get_open_access_papers
 from llm.llm_client import LLMClient
-from llm.cohere import CohereClient
-from llm.gemini import GeminiClient
 from db import ChatMessage
 
 if __name__=="__main__":
@@ -43,8 +39,10 @@ def generate_final_response(
     judge_system_prompt: str,
     session: Session,
     conversationId: int,
+    get_tools: Callable,
     max_debate_rounds: int = 3
 ):
+    functions_map, tools = get_tools(proponentLlmClient.type)
     message_history_str = "--- Message History ---\n"
     for msg in message_history:
         message_history_str += f"Role: {msg.role}, COntents: {msg.content}\n"
@@ -64,7 +62,8 @@ def generate_final_response(
         role="proponent",
         system_prompt=proponent_system_prompt,
         user_query=proponent_prompt,
-        tools=[get_open_access_papers]
+        functions_map=functions_map,
+        tools=tools
     ):
         proponent_response += (json.loads(chunk))["message"]
         yield chunk
@@ -88,13 +87,15 @@ def generate_final_response(
         challenger_prompt = f"{message_history_str}User query: {user_query}\n--- PROPONENT ARGUMENT --- \n{proponent_response}"
     else:
         challenger_prompt = f"User query: {user_query}\n--- PROPONENT ARGUMENT --- \n{proponent_response}"
-    
+
+    functions_map, tools = get_tools(challengerLlmClient.type)    
     print("--- Starting challenger streaming ---")
     for chunk in challengerLlmClient.stream_response(
         role="challenger",
         system_prompt=challenger_system_prompt,
         user_query=challenger_prompt,
-        tools=[get_open_access_papers]
+        functions_map=functions_map,
+        tools=tools
     ):
         challenger_response += (json.loads(chunk))["message"]
         yield chunk
@@ -119,12 +120,14 @@ def generate_final_response(
     else:
         judge_query = f"User query: {user_query}\n--- ROUND {round} ---\n--- PROPONENT---\n{proponent_response}\n--- CHALLENGER ---\n{challenger_response}\n"
     judge_response = ""
+    functions_map, tools = get_tools(judgeLlmClient.type)
     print("--- Starting judge streaming ---")
     for chunk in judgeLlmClient.stream_response(
         role="judge",
         system_prompt=judge_system_prompt,
         user_query=judge_query,
-        tools=[get_open_access_papers]
+        functions_map=functions_map,
+        tools=tools
     ):
         judge_response += (json.loads(chunk))["message"]
         yield chunk
@@ -141,42 +144,6 @@ def generate_final_response(
     session.commit()
 
     print(f"--- Final judge response ---\n{judge_response}\n")
-
-if __name__=="__main__":
-
-    GEMINI_MODEL=os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
-    BACKUP_GEMINI_MODEL=os.getenv("BACKUP_GEMINI_MODEL", "gemini-2.0-flash-lite")
-
-    gemClient = GeminiClient(model_name=GEMINI_MODEL, backup_model_name=BACKUP_GEMINI_MODEL)
-    COHERE_MODEL_NAME=os.getenv("COHERE_MODEL_NAME", "")
-
-    functions_map = {"get_open_access_papers": get_open_access_papers}
-
-    tools = [
-        {
-            "type": "function",
-            "function": {
-                "name": "get_open_access_papers",
-                "description": "Gets open access papers from PMC. Please call this function no more than 3 times per response.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "Query string to search PMC",
-                        }
-                    },
-                    "required": ["query"],
-                },
-            },
-        }
-    ]
-    
-    cohereClient = CohereClient(
-        model_name=COHERE_MODEL_NAME,
-        tools=tools,
-        functions_map=functions_map
-    )
 
     # def f():
     #     current_role = ""

@@ -17,11 +17,13 @@ from prompts import proponent_system_prompt, challenger_system_prompt, judge_sys
 
 GEMINI_MODEL=os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
 BACKUP_GEMINI_MODEL=os.getenv("BACKUP_GEMINI_MODEL", "gemini-2.0-flash-lite")
+COHERE_MODEL_NAME=os.getenv("COHERE_MODEL_NAME", "")
 
 class PromptRequestBody(BaseModel):
     prompt: str
 
 gemClient = GeminiClient(model_name=GEMINI_MODEL, backup_model_name=BACKUP_GEMINI_MODEL)
+cohereClient = CohereClient(model_name=COHERE_MODEL_NAME)
 
 functions_map = {"get_open_access_papers": get_open_access_papers}
 
@@ -45,12 +47,15 @@ tools = [
     }
 ]
 
-COHERE_MODEL_NAME=os.getenv("COHERE_MODEL_NAME", "")
-cohereClient = CohereClient(
-    model_name=COHERE_MODEL_NAME,
-    tools=tools,
-    functions_map=functions_map
-)
+def get_tools(type: str):
+    if type == "gemini":
+        return {}, [get_open_access_papers]
+
+    elif type == "cohere":
+        return functions_map, tools
+    
+    else:
+        return {}, []
 
 user_router = APIRouter(prefix='/user', tags=['users'])
 
@@ -175,14 +180,15 @@ async def new_message(chat_id: int, reqBody: PromptRequestBody, user: Annotated[
         generate_final_response(
             message_history=messages,
             user_query=prompt,
-            proponentLlmClient=gemClient,
+            proponentLlmClient=cohereClient,
             proponent_system_prompt=proponent_system_prompt,
-            challengerLlmClient=gemClient,
+            challengerLlmClient=cohereClient,
             challenger_system_prompt=challenger_system_prompt,
-            judgeLlmClient=gemClient,
+            judgeLlmClient=cohereClient,
             judge_system_prompt=judge_system_prompt,
             session=session,
-            conversationId=chat_id
+            conversationId=chat_id,
+            get_tools=get_tools
         ),
         media_type="text/plain"
     )
