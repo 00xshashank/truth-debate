@@ -1,0 +1,13 @@
+__pycache__
+
+.venv
+
+postgres_data
+
+.env
+
+*.txt
+
+backend/audio/
+
+backend/sample/
