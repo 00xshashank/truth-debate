@@ -21,11 +21,11 @@ def transcribe_request(file: Annotated[bytes, File()]):
     id = str(uuid4())
     filename = f"{AUDIO_DIR}/{id}"
 
-    byte_stream = io.BytesIO(file)
+    # byte_stream = io.BytesIO(file)
     response = requests.post(
         TRANSCRIPTION_ENDPOINT,
         files={
-            "file": (f"audio.webm", byte_stream, "audio/webm")
+            "file": (f"audio.webm", file, "audio/webm")
         },
         headers={
             "api-subscription-key": SARVAM_API_KEY
