@@ -5,7 +5,6 @@ import os
 import requests
 from loguru import logger
 import json
-import io
 
 TRANSCRIPTION_ENDPOINT = "https://api.sarvam.ai/speech-to-text"
 AUDIO_DIR="audio"
